@@ -303,7 +303,24 @@ section { padding: 100px 0; }
 }
 
 .about-text strong { color: var(--text); }
-.about-location { color: var(--accent) !important; margin-top: 24px !important; }
+.about-location { color: var(--accent) !important; margin-top: 16px !important; }
+
+.company-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 20px 0 8px;
+}
+
+.company-badges span {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  border-radius: 6px;
+  padding: 4px 12px;
+  font-size: 0.82rem;
+  font-weight: 500;
+}
 
 .avatar-placeholder {
   width: 160px;

@@ -16,32 +16,14 @@ document.querySelectorAll('section > .container, .project-card, .timeline-item, 
   revealObserver.observe(el);
 });
 
-// Navbar shrink on scroll
+// Navbar shrink + active nav link on scroll (single listener)
 const navbar = document.getElementById('navbar');
-window.addEventListener('scroll', () => {
-  navbar.style.padding = window.scrollY > 50 ? '10px 40px' : '16px 40px';
-});
-
-// Mobile menu toggle
-const menuToggle = document.querySelector('.menu-toggle');
-const navLinks = document.querySelector('.nav-links');
-menuToggle?.addEventListener('click', () => {
-  navLinks.style.display = navLinks.style.display === 'flex' ? 'none' : 'flex';
-  navLinks.style.flexDirection = 'column';
-  navLinks.style.position = 'absolute';
-  navLinks.style.top = '60px';
-  navLinks.style.right = '24px';
-  navLinks.style.background = 'var(--bg-card)';
-  navLinks.style.padding = '16px 24px';
-  navLinks.style.borderRadius = '8px';
-  navLinks.style.border = '1px solid var(--border)';
-});
-
-// Active nav link on scroll
 const sections = document.querySelectorAll('section[id]');
 const navItems = document.querySelectorAll('.nav-links a');
 
 window.addEventListener('scroll', () => {
+  navbar.style.padding = window.scrollY > 50 ? '10px 40px' : '16px 40px';
+
   let current = '';
   sections.forEach(section => {
     if (window.scrollY >= section.offsetTop - 100) {
@@ -51,18 +33,18 @@ window.addEventListener('scroll', () => {
   navItems.forEach(a => {
     a.style.color = a.getAttribute('href') === `#${current}` ? 'var(--accent)' : '';
   });
+}, { passive: true });
+
+// Mobile menu toggle (class-based)
+const menuToggle = document.querySelector('.menu-toggle');
+const navLinks = document.querySelector('.nav-links');
+menuToggle?.addEventListener('click', () => {
+  navLinks.classList.toggle('mobile-open');
 });
 
-// Smooth scroll for nav links
-document.querySelectorAll('a[href^="#"]').forEach(anchor => {
-  anchor.addEventListener('click', (e) => {
-    e.preventDefault();
-    const target = document.querySelector(anchor.getAttribute('href'));
-    if (target) {
-      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      if (navLinks.style.display === 'flex' && window.innerWidth < 900) {
-        navLinks.style.display = 'none';
-      }
-    }
-  });
+// Close mobile menu on nav click
+navLinks?.addEventListener('click', (e) => {
+  if (e.target.tagName === 'A' && navLinks.classList.contains('mobile-open')) {
+    navLinks.classList.remove('mobile-open');
+  }
 });

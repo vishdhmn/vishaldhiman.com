@@ -1,0 +1,105 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: read
+  actions: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint HTML
+        run: git ls-files '*.html' | xargs npx --yes htmlhint@1 --rules tagname-lowercase,attr-lowercase,attr-value-double-quotes,doctype-first,tag-pair,spec-char-escape,id-unique,attr-no-duplication,title-require
+      - name: Check internal links
+        run: |
+          python3 - <<'EOF'
+          import os, re, subprocess, sys
+          files = subprocess.check_output(['git', 'ls-files', '*.html'], text=True).split()
+          bad = []
+          for f in files:
+              html = open(f, encoding='utf-8').read()
+              ids = set(re.findall(r'\sid="([^"]+)"', html))
+              for ref in re.findall(r'\s(?:href|src)="([^"]*)"', html):
+                  if not ref or re.match(r'^(?:[a-z][a-z0-9+.-]*:|//)', ref, re.I):
+                      continue
+                  if ref.startswith('#'):
+                      if ref != '#' and ref[1:] not in ids:
+                          bad.append(f + ': missing anchor ' + ref)
+                      continue
+                  path = re.split(r'[?#]', ref)[0]
+                  base = '.' if path.startswith('/') else os.path.dirname(f)
+                  if not os.path.exists(os.path.normpath(os.path.join(base, path.lstrip('/')))):
+                      bad.append(f + ': missing file ' + ref)
+          print('\n'.join(bad) or 'internal links ok')
+          sys.exit(1 if bad else 0)
+          EOF
+
+  evidence:
+    needs: ci
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
+      SHA: ${{ github.event.pull_request.head.sha }}
+      CI_RESULT: ${{ needs.ci.result }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Build evidence
+        run: |
+          set -euo pipefail
+          gh api "repos/$REPO/commits/$SHA/check-runs" --paginate --jq '.check_runs[] | {name, status, conclusion, html_url}' | jq -s '.' > checks.json
+          gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[].filename' > files.txt
+          gh api "repos/$REPO/issues/$PR/labels" --jq '.[].name' > labels.txt
+          wf=false; grep -q '^\.github/' files.txt && wf=true
+          lbl=false; grep -qx 'policy-change' labels.txt && lbl=true
+          viol=false; if [ "$wf" = true ] && [ "$lbl" = false ]; then viol=true; fi
+          echo "VIOLATION=$viol" >> "$GITHUB_ENV"
+          jq -n --arg repo "$REPO" --argjson pr "$PR" --arg sha "$SHA" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --slurpfile checks checks.json --argjson wf "$wf" --argjson lbl "$lbl" --argjson viol "$viol" \
+            '{repo: $repo, pr: $pr, head_sha: $sha, generated_at: $at, checks: $checks[0], policy: {workflow_files_changed: $wf, policy_change_label: $lbl, violation: $viol}}' > evidence.json
+          if [ "$viol" = true ]; then policy="VIOLATION: .github/ files changed without the policy-change label"; else policy="pass"; fi
+          {
+            echo '<!-- evidence -->'
+            echo "## Evidence for $SHA"
+            echo
+            echo '| Check | Conclusion | Link |'
+            echo '|---|---|---|'
+            jq -r '.checks[] | "| \(.name) | \(.conclusion // .status) | [run](\(.html_url)) |"' evidence.json
+            echo
+            echo "Policy: $policy"
+            echo
+            echo "Artifact: $RUN_URL"
+          } > comment.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: evidence-${{ github.event.pull_request.head.sha }}
+          path: evidence.json
+      - name: Post sticky comment
+        run: |
+          set -euo pipefail
+          ids=$(gh api "repos/$REPO/issues/$PR/comments" --paginate --jq '.[] | select(.body | startswith("<!-- evidence -->")) | .id')
+          id=$(printf '%s\n' "$ids" | head -n1)
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$id" -F body=@comment.md > /dev/null
+          else
+            gh api -X POST "repos/$REPO/issues/$PR/comments" -F body=@comment.md > /dev/null
+          fi
+      - name: Decide
+        run: |
+          if [ "$CI_RESULT" != success ] || [ "$VIOLATION" = true ]; then
+            echo "ci=$CI_RESULT policy_violation=$VIOLATION"
+            exit 1
+          fi
